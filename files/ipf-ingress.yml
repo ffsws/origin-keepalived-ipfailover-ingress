@@ -1,0 +1,112 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: ipfailover-ingress
+objects:
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: ipfailover
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      ipfailover: ${CONFIG_NAME}
+    name: ${CONFIG_NAME}
+  spec:
+    replicas: ${{REPLICA_COUNT}}
+    strategy:
+      resources: {}
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          ipfailover: ${CONFIG_NAME}
+        annotations:
+          scheduler.alpha.kubernetes.io/affinity: |
+            {
+              "podAntiAffinity": {
+                "requiredDuringSchedulingIgnoredDuringExecution": [{
+                  "labelSelector": {
+                    "matchExpressions": [{
+                      "key": "ipfailover",
+                      "operator": "In",
+                      "values":["${CONFIG_NAME}"]
+                    }]
+                  },
+                  "topologyKey": "kubernetes.io/hostname"
+                }]
+              }
+            }
+      spec:
+        containers:
+        - env:
+          - name: OPENSHIFT_HA_CONFIG_NAME
+            value: ${CONFIG_NAME}
+          - name: OPENSHIFT_HA_IPTABLES_CHAIN
+            value: "INPUT"
+          - name: OPENSHIFT_HA_MONITOR_PORT
+            value: "0"
+          - name: OPENSHIFT_HA_NETWORK_INTERFACE
+            value: ${NETWORK_INTERFACE}
+          - name: OPENSHIFT_HA_REPLICA_COUNT
+            value: ${REPLICA_COUNT}
+          - name: OPENSHIFT_HA_USE_UNICAST
+            value: "false"
+          - name: OPENSHIFT_HA_VIRTUAL_IPS
+            value: ${VIRTUAL_IPS}
+          - name: OPENSHIFT_HA_VRRP_ID_OFFSET
+            value: ${VRRP_ID_OFFSET}
+          image: quay.io/appuio/origin-keepalived-ipfailover-ingress:${IMAGE_VERSION}
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+              - pgrep
+              - keepalived
+            initialDelaySeconds: 10
+          name: ipf-ingress-keepalived
+          ports: {}
+          resources: {}
+          securityContext:
+            privileged: true
+          volumeMounts:
+          - mountPath: /lib/modules
+            name: lib-modules
+            readOnly: true
+        hostNetwork: true
+        nodeSelector:
+          ipfailover: ${NODE_SELECTOR_VALUE}
+        securityContext: {}
+        serviceAccount: ipfailover
+        serviceAccountName: ipfailover
+        volumes:
+        - hostPath:
+            path: /lib/modules
+          name: lib-modules
+    test: false
+    triggers:
+    - type: ConfigChange
+  status: {}
+parameters:
+- name: CONFIG_NAME
+  description: Name of the IP failover configuration
+  required: true
+- name: VIRTUAL_IPS
+  description: A set of virtual IP addresses or ranges to configure and provide failover for.
+  required: true
+- name: NODE_SELECTOR_VALUE
+  description: Selector to filter the nodes that should run these IP failover containers. Nodes should be labeled with 'ipfailover=<NODE_SELECTOR_VALUE>'
+  required: true
+- name: NETWORK_INTERFACE
+  description: Interface to configure the virtual IPs on. Defaults to the interface connected to the default gateway.
+  value: ""
+- name: REPLICA_COUNT
+  description: Number of replicas of this IP failover container that should run. Should match the number of nodes that match the node selector. At least 2 are needed for high availability.
+  value: "1"
+- name: VRRP_ID_OFFSET
+  description: Offset used to generate VRRP ids. VRRP ids must be unique within the cluster. Defaults to 250.
+  value: "250"
+- name: IMAGE_VERSION
+  description: Version of the IP failover ingress image to use.
+  value: "latest"
